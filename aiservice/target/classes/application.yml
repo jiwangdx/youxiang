@@ -39,7 +39,7 @@ spring:
 
   datasource:
     driver-class-name: com.mysql.cj.jdbc.Driver
-    url: jdbc:mysql://192.168.10.100:3306/hmdp?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
+    url: jdbc:mysql://192.168.10.100:3306/youxiang?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
     username: root
     password: Xiongwm0719#
 
