@@ -1,0 +1,51 @@
+langchain4j:
+  open-ai:
+    chat-model:
+      base-url: https://dashscope.aliyuncs.com/compatible-mode/v1
+      api-key: sk-4a4ab901a70c4c39a2eefb23cf5d669c
+      model-name: deepseek-v3.2
+      log-requests: true
+      log-responses: true
+    streaming-chat-model:
+      base-url: https://dashscope.aliyuncs.com/compatible-mode/v1
+      api-key: sk-4a4ab901a70c4c39a2eefb23cf5d669c
+      model-name: deepseek-v3.2
+      log-requests: true
+      log-responses: true
+    embedding-model:
+      base-url: https://dashscope.aliyuncs.com/compatible-mode/v1
+      api-key: sk-4a4ab901a70c4c39a2eefb23cf5d669c
+      model-name: text-embedding-v4
+      log-requests: true
+      log-responses: true
+      max-segments-per-batch: 10
+
+  community:
+    redis:
+      host: localhost
+      port: 6379
+logging:
+  level:
+    dev.langchain4j: debug
+
+server:
+  port: 81
+
+spring:
+  data:
+    redis:
+      host: localhost
+      port: 6379
+
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://192.168.10.100:3306/hmdp?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
+    username: root
+    password: Xiongwm0719#
+
+mybatis:
+  configuration:
+    map-underscore-to-camel-case: true
+
+mybatis-plus:
+  type-aliases-package: com.itheima.consultant.pojo # mybatis-plus的别名扫描包
