@@ -12,7 +12,7 @@ import dev.langchain4j.data.segment.TextSegment;
 import dev.langchain4j.model.embedding.EmbeddingModel;
 import dev.langchain4j.store.embedding.EmbeddingStore;
 import dev.langchain4j.store.embedding.EmbeddingStoreIngestor;
-import dev.langchain4j.store.embedding.inmemory.InMemoryEmbeddingStore;
+import dev.langchain4j.store.embedding.chroma.ChromaEmbeddingStore;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -141,8 +141,6 @@ public class EmbeddingStoreService {
             System.err.println("5. 处理数据并存储（使用映射表管理向量）：");
             System.err.flush();
             
-            InMemoryEmbeddingStore inMemoryStore = (InMemoryEmbeddingStore) store;
-            
             for (Shop shop : shops) {
                 String content = "商铺名称: " + shop.getName() + "\n"
                         + "商铺类型ID: " + shop.getTypeId() + "\n"
@@ -169,17 +167,16 @@ public class EmbeddingStoreService {
                     // 映射表可能不存在，忽略
                 }
                 
-                // ========== 2. 如果存在旧向量，删除 ==========
+                // ========== 2. 如果存在旧向量，使用 Chroma 客户端删除 ==========
                 if (oldEmbeddingId != null) {
-                    inMemoryStore.remove(oldEmbeddingId);
+                    deleteEmbeddingById(oldEmbeddingId);
                     System.err.println("      已删除旧向量 (embedding_id: " + oldEmbeddingId + ")");
                 }
                 
                 // ========== 3. 生成新向量并插入 ==========
                 TextSegment segment = new TextSegment(content, Metadata.from("shopId", shopIdStr));
                 var embedding = embeddingModel.embed(content).content();
-                String newEmbeddingId = "shop_" + shopIdStr;  // 用固定格式的ID
-                inMemoryStore.add(newEmbeddingId, embedding, segment);
+                String newEmbeddingId = store.add(embedding, segment);
                 System.err.println("      已添加新向量 (embedding_id: " + newEmbeddingId + ")");
                 
                 // ========== 4. 更新映射表 ==========
@@ -227,7 +224,6 @@ public class EmbeddingStoreService {
             List<Shop> allShops = shopMapper.selectList(new QueryWrapper<>());
             List<Long> dbShopIds = allShops.stream().map(Shop::getId).toList();
             
-            InMemoryEmbeddingStore inMemoryStore = (InMemoryEmbeddingStore) store;
             int deletedCount = 0;
             
             // 3. 遍历映射表，找出孤立的记录
@@ -239,8 +235,8 @@ public class EmbeddingStoreService {
                 if (!dbShopIds.contains(shopId)) {
                     System.err.println("   发现孤立向量：shop_id=" + shopId + ", embedding_id=" + embeddingId);
                     
-                    // 删除向量
-                    inMemoryStore.remove(embeddingId);
+                    // 使用 Chroma 客户端删除孤立向量
+                    deleteEmbeddingById(embeddingId);
                     
                     // 删除映射表记录
                     jdbcTemplate.update("DELETE FROM shop_embedding_mapping WHERE shop_id = ?", shopId);
@@ -288,7 +284,6 @@ public class EmbeddingStoreService {
 
         // 2. 清空映射表
         System.err.println("2. 清空映射表：");
-        InMemoryEmbeddingStore inMemoryStore = (InMemoryEmbeddingStore) store;
         try {
             jdbcTemplate.execute("TRUNCATE TABLE shop_embedding_mapping");
             System.err.println("   已清空映射表");
@@ -297,8 +292,13 @@ public class EmbeddingStoreService {
         }
         System.err.flush();
 
-        // 3. 遍历所有商铺，先删后插（确保全量更新时不会重复）
-        System.err.println("3. 逐个添加向量（先删后插）：");
+        // 3. ChromaEmbeddingStore 不支持直接清空，但可以重建 collection
+        // 这里直接添加新数据即可，Chroma 会在同一 collection 中累加
+        System.err.println("3. 提示：Chroma 不支持直接清空，将增量添加向量");
+        System.err.flush();
+
+        // 4. 遍历所有商铺，添加向量
+        System.err.println("4. 逐个添加向量：");
         for (Shop shop : shops) {
             String content = "商铺名称: " + shop.getName() + "\n"
                     + "商铺类型ID: " + shop.getTypeId() + "\n"
@@ -310,15 +310,11 @@ public class EmbeddingStoreService {
                     + "营业时间: " + shop.getOpenHours();
 
             String shopIdStr = shop.getId().toString();
-            String embeddingId = "shop_" + shopIdStr;
-            
-            // 先删除旧向量（如果存在）
-            inMemoryStore.remove(embeddingId);
             
             // 生成向量并添加
             TextSegment segment = new TextSegment(content, Metadata.from("shopId", shopIdStr));
             var embedding = embeddingModel.embed(content).content();
-            inMemoryStore.add(embeddingId, embedding, segment);
+            String embeddingId = store.add(embedding, segment);
             
             // 更新映射表
             jdbcTemplate.update("INSERT INTO shop_embedding_mapping (shop_id, embedding_id, created_at, updated_at) VALUES (?, ?, NOW(), NOW())",
@@ -339,15 +335,33 @@ public class EmbeddingStoreService {
     }
 
     /**
-     * 根据商铺ID删除旧的向量
-     * 注意：InMemoryEmbeddingStore 不支持按 metadata 删除
-     * 全量更新时会重建索引作为兜底
+     * 使用 Chroma 客户端按 ID 删除向量
      */
-    private void removeEmbeddingsByShopId(InMemoryEmbeddingStore<TextSegment> store, Long shopId) {
-        // InMemoryEmbeddingStore 没有直接的按 metadata 删除方法
-        // 依赖每7天的全量更新来重建索引
-        System.err.println("      提示：InMemoryEmbeddingStore 不支持按 metadata 删除");
-        System.err.println("      依赖全量更新（每7天）来重建索引");
+    private void deleteEmbeddingById(String embeddingId) {
+        try {
+            ChromaEmbeddingStore chromaStore = (ChromaEmbeddingStore) store;
+            chromaStore.removeAll(List.of(embeddingId));
+        } catch (Exception e) {
+            System.err.println("      删除向量失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 根据商铺ID删除旧的向量
+     * 使用 Chroma 客户端按 ID 删除
+     */
+    private void removeEmbeddingsByShopId(Long shopId) {
+        try {
+            String shopIdStr = shopId.toString();
+            List<Map<String, Object>> results = jdbcTemplate.queryForList(
+                "SELECT embedding_id FROM shop_embedding_mapping WHERE shop_id = ?", shopIdStr);
+            if (!results.isEmpty()) {
+                String embeddingId = (String) results.get(0).get("embedding_id");
+                deleteEmbeddingById(embeddingId);
+            }
+        } catch (Exception e) {
+            System.err.println("      删除向量失败: " + e.getMessage());
+        }
     }
 
 }

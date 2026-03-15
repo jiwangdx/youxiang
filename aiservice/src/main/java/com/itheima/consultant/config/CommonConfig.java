@@ -1,15 +1,7 @@
 package com.itheima.consultant.config;
 
 
-import com.itheima.consultant.mapper.ShopMapper;
-import com.itheima.consultant.pojo.Shop;
-import com.itheima.consultant.service.ShopService;
-import dev.langchain4j.data.document.Document;
-import dev.langchain4j.data.document.DocumentSplitter;
-import dev.langchain4j.data.document.loader.ClassPathDocumentLoader;
 
-import dev.langchain4j.data.document.parser.apache.pdfbox.ApachePdfBoxDocumentParser;
-import dev.langchain4j.data.document.splitter.DocumentSplitters;
 import dev.langchain4j.memory.ChatMemory;
 import dev.langchain4j.memory.chat.ChatMemoryProvider;
 import dev.langchain4j.memory.chat.MessageWindowChatMemory;
@@ -20,9 +12,10 @@ import dev.langchain4j.rag.content.retriever.EmbeddingStoreContentRetriever;
 
 import dev.langchain4j.store.embedding.EmbeddingStore;
 import dev.langchain4j.store.embedding.EmbeddingStoreIngestor;
-import dev.langchain4j.store.embedding.inmemory.InMemoryEmbeddingStore;
+import dev.langchain4j.store.embedding.chroma.ChromaEmbeddingStore;
 import dev.langchain4j.store.memory.chat.ChatMemoryStore;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.scheduling.annotation.EnableScheduling;
@@ -56,7 +49,6 @@ public class CommonConfig {
     //构建ChatMemoryProvider对象
 
     @Bean
-    @Scheduled(cron ="*/6 * * * * ?")
     public ChatMemoryProvider chatMemoryProvider(){
         System.out.println("构建一次");
         ChatMemoryProvider chatMemoryProvider = new ChatMemoryProvider() {
@@ -101,11 +93,18 @@ public class CommonConfig {
 //        return store;
 //    }
 
+    @Value("${langchain4j.community.chroma.host:localhost}")
+    private String chromaHost;
+
+    @Value("${langchain4j.community.chroma.port:8000}")
+    private int chromaPort;
+
     @Bean
     public EmbeddingStore store() {
-        // 构建空的向量数据库操作对象（操作的是内存版本的向量数据库）
-        // 数据初始化和更新由 EmbeddingStoreService 负责
-        InMemoryEmbeddingStore store = new InMemoryEmbeddingStore();
+        ChromaEmbeddingStore store = ChromaEmbeddingStore.builder()
+                .baseUrl("http://" + chromaHost + ":" + chromaPort)
+                .collectionName("shop_embeddings")
+                .build();
         return store;
     }
 
